@@ -663,9 +663,10 @@ class PdfConverter(DocumentConverter):
 
                     page.close()  # Free cached page data immediately
 
-            # If no pages had form-style content, use pdfminer for
-            # the whole document (better text spacing for prose).
-            if form_page_count == 0:
+            # If no pages had form-style content AND no vision descriptions
+            # were produced, use pdfminer for the whole document (better
+            # text spacing for prose).  When vision chunks exist, keep them.
+            if form_page_count == 0 and not markdown_chunks:
                 pdf_bytes.seek(0)
                 markdown = pdfminer.high_level.extract_text(pdf_bytes)
             else:
