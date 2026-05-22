@@ -2,6 +2,7 @@ import sys
 import io
 import re
 import base64
+import logging
 from typing import BinaryIO, Any, Optional
 
 from .._base_converter import DocumentConverter, DocumentConverterResult, ConversionProgress
@@ -10,6 +11,8 @@ from .._exceptions import MissingDependencyException, MISSING_DEPENDENCY_MESSAGE
 
 # Pattern for MasterFormat-style partial numbering (e.g., ".1", ".2", ".10")
 PARTIAL_NUMBERING_PATTERN = re.compile(r"^\.\d+$")
+
+_logger = logging.getLogger(__name__)
 
 
 def _merge_partial_numbering_lines(text: str) -> str:
@@ -87,7 +90,7 @@ def _to_markdown_table(table: list[list[str]], include_separator: bool = True) -
     if not table:
         return ""
 
-    # Normalize None → ""
+    # Normalize None -> ""
     table = [[cell if cell is not None else "" for cell in row] for row in table]
 
     # Filter out empty rows
@@ -558,6 +561,11 @@ def _describe_page_image(
         return description.strip() if description and description.strip() else None
 
     except Exception:
+        _logger.warning(
+            "PdfConverter: _describe_page_image failed for page %d/%d",
+            page_num, total_pages,
+            exc_info=True,
+        )
         return None
 
 
@@ -609,7 +617,7 @@ class PdfConverter(DocumentConverter):
 
         assert isinstance(file_stream, io.IOBase)
 
-        # Optional progress callback — reported per page
+        # Optional progress callback -- reported per page
         progress_callback = kwargs.get("progress_callback")
 
         # Read file stream into BytesIO for compatibility with pdfplumber
@@ -648,7 +656,7 @@ class PdfConverter(DocumentConverter):
                             markdown_chunks.append(text.strip())
                         else:
                             # Page without extractable text (scan/screenshot)
-                            # → describe via vision LLM if available
+                            # -> describe via vision LLM if available
                             _llm_client = kwargs.get("llm_client")
                             _llm_model = kwargs.get("llm_model")
                             if _llm_client and _llm_model:
