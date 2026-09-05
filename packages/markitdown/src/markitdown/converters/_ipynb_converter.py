@@ -43,8 +43,9 @@ class IpynbConverter(DocumentConverter):
                         "nbformat" in notebook_content
                         and "nbformat_minor" in notebook_content
                     )
-                except (UnicodeDecodeError, ValueError):
-                    # File contains non-decodable bytes — definitely not a notebook
+                except (UnicodeDecodeError, ValueError, LookupError):
+                    # File contains non-decodable bytes or an unknown charset —
+                    # definitely not a notebook. LookupError covers bad encodings.
                     return False
                 finally:
                     file_stream.seek(cur_pos)
@@ -79,7 +80,7 @@ class IpynbConverter(DocumentConverter):
                     if title is None:
                         for line in source_lines:
                             if line.startswith("# "):
-                                title = line.lstrip("# ").strip()
+                                title = line.removeprefix("# ").strip()
                                 break
 
                 elif cell_type == "code":
