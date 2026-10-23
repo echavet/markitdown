@@ -3,6 +3,7 @@ import io
 import re
 import base64
 import logging
+import unicodedata
 from typing import BinaryIO, Any, Optional
 
 from .._base_converter import DocumentConverter, DocumentConverterResult, ConversionProgress
@@ -496,6 +497,94 @@ def _extract_tables_from_words(page: Any) -> list[list[list[str]]]:
     return [table_rows]
 
 
+# --- Word spacing: pdfplumber x_tolerance_ratio with a per-page guard -----------
+#
+# pdfplumber merges two characters into one word when the gap between them is
+# below ``x_tolerance`` (3 points by default). For small or tightly spaced fonts
+# the real space between words is narrower than that, so the words get glued
+# ("Largelanguagemodels"). ``x_tolerance_ratio`` expresses the tolerance as a
+# fraction of the font size instead, which follows the typography.
+#
+# A ratio that is too small for a page (letter-spaced or expanded fonts) splits
+# words into single letters. The guard compares both extractions of the page and
+# falls back to the default tolerance when the ratio splits words apart while the
+# default does not.
+X_TOLERANCE_RATIO = 0.10
+DEFAULT_X_TOLERANCE = 3
+# Fall back to the default tolerance when more than this share of the words are
+# one-letter words with the ratio, while fewer than _GUARD_DEFAULT_MAX_SHARE are
+# with the default tolerance.
+_GUARD_RATIO_MIN_SHARE = 0.35
+_GUARD_DEFAULT_MAX_SHARE = 0.20
+_WORD_PATTERN = re.compile(r"[A-Za-z\u00c0-\u00ff0-9]+")
+
+
+def _single_letter_share(text: str) -> float:
+    """Share of one-character words in ``text`` (0.0 when it has no word)."""
+    words = _WORD_PATTERN.findall(unicodedata.normalize("NFKC", text))
+    if not words:
+        return 0.0
+    return sum(1 for word in words if len(word) == 1) / len(words)
+
+
+class _SpacedPage:
+    """A pdfplumber page whose word spacing was chosen once, with the guard.
+
+    Delegates everything to the page. ``extract_words`` and ``extract_text`` use
+    ``x_tolerance_ratio`` when the guard accepted it, and the default tolerance
+    otherwise, so every extraction of the page agrees on where words end.
+    """
+
+    def __init__(self, page: Any):
+        self._page = page
+        self.use_ratio = False
+        self.fallback = False
+        self._text: Optional[str] = None
+        self._select()
+
+    def _select(self) -> None:
+        default_text = self._page.extract_text() or ""
+        if not default_text.strip():
+            # Nothing to space (blank or image-only page): keep the default.
+            self._text = default_text
+            return
+        try:
+            ratio_text = (
+                self._page.extract_text(x_tolerance_ratio=X_TOLERANCE_RATIO) or ""
+            )
+        except TypeError:
+            # pdfplumber without x_tolerance_ratio: keep the default.
+            _logger.warning("PdfConverter: pdfplumber lacks x_tolerance_ratio")
+            self._text = default_text
+            return
+        if (
+            _single_letter_share(ratio_text) > _GUARD_RATIO_MIN_SHARE
+            and _single_letter_share(default_text) < _GUARD_DEFAULT_MAX_SHARE
+        ):
+            self.fallback = True
+            self._text = default_text
+            return
+        self.use_ratio = True
+        self._text = ratio_text
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._page, name)
+
+    def extract_text(self, *args: Any, **kwargs: Any) -> str:
+        if not args and not kwargs:
+            return self._text or ""
+        return self._page.extract_text(*args, **self._spacing(kwargs))
+
+    def extract_words(self, *args: Any, **kwargs: Any) -> list:
+        return self._page.extract_words(*args, **self._spacing(kwargs))
+
+    def _spacing(self, kwargs: dict) -> dict:
+        if self.use_ratio and "x_tolerance" in kwargs:
+            kwargs = {k: v for k, v in kwargs.items() if k != "x_tolerance"}
+            kwargs["x_tolerance_ratio"] = X_TOLERANCE_RATIO
+        return kwargs
+
+
 def _describe_page_image(
     page: Any,
     llm_client: Any,
@@ -644,7 +733,9 @@ class PdfConverter(DocumentConverter):
                             unit="page",
                             source="PdfConverter",
                         ))
-                    page_content = _extract_form_content_from_words(page)
+                    # One spacing decision per page, shared by the form and plain paths.
+                    spaced = _SpacedPage(page)
+                    page_content = _extract_form_content_from_words(spaced)
 
                     if page_content is not None:
                         form_page_count += 1
@@ -652,7 +743,7 @@ class PdfConverter(DocumentConverter):
                             markdown_chunks.append(page_content)
                     else:
                         plain_page_indices.append(page_idx)
-                        text = page.extract_text()
+                        text = spaced.extract_text()
                         if text and text.strip():
                             markdown_chunks.append(text.strip())
                         else:
