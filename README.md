@@ -2,7 +2,6 @@
 
 [![PyPI](https://img.shields.io/pypi/v/markitdown.svg)](https://pypi.org/project/markitdown/)
 ![PyPI - Downloads](https://img.shields.io/pypi/dd/markitdown)
-[![Built by AutoGen Team](https://img.shields.io/badge/Built%20by-AutoGen%20Team-blue)](https://github.com/microsoft/autogen)
 
 > [!IMPORTANT]
 > MarkItDown performs I/O with the privileges of the current process. Like open() or requests.get(), it will access resources that the process itself can access. Sanitize your inputs in untrusted environments, and call the narrowest `convert_*` function needed for your use case (e.g., `convert_stream()`, or `convert_local()`). See the [Security Considerations](#security-considerations) section of the documentation for more information.
@@ -34,7 +33,7 @@ Markdown-formatted text, and understand it well. As a side benefit, Markdown con
 are also highly token-efficient.
 
 ## Prerequisites
-MarkItDown requires Python 3.10 or higher. It is recommended to use a virtual environment to avoid dependency conflicts.
+MarkItDown requires Python 3.10 through 3.14. It is recommended to use a virtual environment to avoid dependency conflicts.
 
 With the standard Python installation, you can create and activate a virtual environment using the following commands:
 
@@ -288,11 +287,15 @@ To use Large Language Models for image descriptions (currently only for pptx and
 from markitdown import MarkItDown
 from openai import OpenAI
 
-client = OpenAI()
+client = OpenAI(max_retries=5)
 md = MarkItDown(llm_client=client, llm_model="gpt-4o", llm_prompt="optional custom prompt")
 result = md.convert("example.jpg")
 print(result.markdown)
 ```
+
+`max_retries` controls the OpenAI client's automatic retries for retryable errors (the default is 2); `5` allows up to six attempts with backoff. See the [OpenAI SDK retry documentation](https://github.com/openai/openai-python#retries).
+
+If any attempt succeeds, image conversion continues normally. If the client raises an error after exhausting its retries, or encounters a non-retryable error, MarkItDown tries other applicable converters and raises `FileConversionException` only if none succeeds.
 
 ### Docker
 
