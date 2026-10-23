@@ -631,6 +631,7 @@ class PdfConverter(DocumentConverter):
             # keep memory usage constant regardless of page count.
             markdown_chunks: list[str] = []
             form_page_count = 0
+            vision_page_count = 0
             plain_page_indices: list[int] = []
 
             with pdfplumber.open(pdf_bytes) as pdf:
@@ -668,13 +669,15 @@ class PdfConverter(DocumentConverter):
                                 )
                                 if description:
                                     markdown_chunks.append(description)
+                                    vision_page_count += 1
 
                     page.close()  # Free cached page data immediately
 
             # If no pages had form-style content AND no vision descriptions
             # were produced, use pdfminer for the whole document (better
-            # text spacing for prose).  When vision chunks exist, keep them.
-            if form_page_count == 0 and not markdown_chunks:
+            # text spacing for prose).  When vision descriptions exist,
+            # keep the per-page chunks so they are not lost.
+            if form_page_count == 0 and vision_page_count == 0:
                 pdf_bytes.seek(0)
                 markdown = pdfminer.high_level.extract_text(pdf_bytes)
             else:
